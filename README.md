@@ -21,16 +21,15 @@ original files.
 ## Requirements
 
 - ColorOS / OPPO device where the packages above are present
-- One of:
-  - **Magisk v20.4+** (the installer loads `/data/adb/magisk/util_functions.sh`)
-  - **KernelSU**
-  - **KernelSU Next**
-- On KernelSU and KernelSU Next builds that mount modules through a
-  metamodule, a mount metamodule that supports the **product** partition has
-  to be installed as well. The official
-  [meta-overlayfs](https://github.com/KernelSU-Modules-Repo/meta-overlayfs)
-  metamodule does. Magisk mounts `system/product` onto `/product` itself and
-  does not need one.
+- One of the managers below. Mount support is not the same on every version.
+
+| Manager | Mount |
+| --- | --- |
+| Magisk v20.4+ | Magisk mounts `system/product` onto `/product` itself. No metamodule. The zip's `update-binary` is Magisk **v31.1** `module_installer.sh` (same bytes as current `master` at the time of v31.1). The app replaces it with the copy shipped in that Magisk build. |
+| KernelSU v1.x and v2.x | Built-in OverlayFS. No metamodule. |
+| KernelSU v3.0.0+ | The installer still extracts this zip. Mounting is done by whichever single mount metamodule is installed. [meta-overlayfs](https://github.com/KernelSU-Modules-Repo/meta-overlayfs) is the reference and supports `product`. A magic-mount metamodule is a different choice, not a requirement to use meta-overlayfs. With no mount metamodule, the module installs and is not mounted. |
+| KernelSU Next v1.x | Built-in Magic Mount or OverlayFS (`ksud_magic` / `ksud_overlayfs` in v1.1.1). No metamodule. |
+| KernelSU Next v3.0.0+ | Same metamodule rule as KernelSU v3. `meta-overlayfs` is the reference, not the only mount implementation. |
 
 ## Build the zip
 
@@ -54,10 +53,12 @@ system/product/priv-app/CTAutoRegist/CTAutoRegist.apk
 system/product/priv-app/CTAutoRegist/oat/arm64/CTAutoRegist.vdex
 ```
 
-`update-binary` is the upstream Magisk
-[`module_installer.sh`](https://github.com/topjohnwu/Magisk/blob/master/scripts/module_installer.sh),
-unchanged. The Magisk app replaces that file with its own copy during
-install. Module-specific steps belong in `customize.sh`.
+`update-binary` is Magisk v31.1
+[`module_installer.sh`](https://github.com/topjohnwu/Magisk/blob/v31.1/scripts/module_installer.sh)
+(git blob `28b48e580a9b605038bd3de15c5aba08d2258b14`), unchanged. The Magisk
+app replaces that file with its own copy during install. Module-specific
+steps belong in `customize.sh`. Provenance for the scripts exercised by the
+harness is in `tests/upstream/SOURCES.md`.
 
 ## Install
 
@@ -88,30 +89,37 @@ APKs come back because `/product` itself was never written.
 
 Keep overlay files under `system/product/` in the zip.
 
-- Magisk mounts `system/product` onto `/product` whether or not `/product` is
-  a separate partition, and creates the `product` symlink in the module
-  directory itself.
-- KernelSU and KernelSU Next, when `/product` is a real directory, move
-  `system/product` to `product/` during install and leave
-  `system/product` as a symlink to `../product`. `meta-overlayfs` mounts that
-  `product/` tree.
+On a separate `/product` (the usual ColorOS layout, where `/system/product`
+points at `/product`):
+
+- Magisk's installer leaves the files at `system/product/`. Magisk creates
+  the module `product` symlink when it mounts, not during unzip.
+- KernelSU v1.0.5 moves the tree to `product/` and links `system/product` to
+  `../product`.
+- KernelSU v2.1.2, v3.x, KernelSU Next v1.1.1 OverlayFS, and KernelSU Next
+  v3.x do that same move when `/product` is a real directory.
+- KernelSU Next v1.1.1 Magic Mount does not move the tree. It links
+  `product` to `./system/product`.
+
+When `/product` is only a symlink into `/system/product`, those installers
+leave the files at `system/product/`.
 
 `customize.sh` checks that the four placeholder files were extracted and sets
-their permissions. It does not move the tree; each manager does that for its
-own mount implementation.
+their permissions. It does not move the tree.
 
 ## Limitations
 
-- Overlay mount behavior on a real ColorOS `/product` still has to be checked
-  on a device. This repository can only check that the zip matches the module
-  format.
+- `tests/install-compat.sh` runs the installer scripts in a Linux mount
+  namespace. It does not mount the overlay on a device. A ColorOS reboot is
+  still required to confirm `/product/app/RegService/RegService.apk` is size 0.
 - The placeholders overlay the system copies. A copy of either package already
   installed under `/data` is left alone.
 - The `vdex` placeholders cover the `arm64` oat directory shipped by the
   original module. The APK placeholders are what stop the clients from loading.
-- A mount metamodule that mishandles the installer's `system/product` →
-  `product/` relocation can fail to mount this module. `meta-overlayfs`
-  supports the product partition.
+- KernelSU v3 and KernelSU Next v3 mount only through the installed
+  metamodule. A metamodule that mishandles the `system/product` → `product/`
+  move can fail to apply this module. `meta-overlayfs` supports `product`.
+  KernelSU v1/v2 and KernelSU Next v1 mount it themselves.
 
 ## Disclaimer
 
@@ -134,10 +142,13 @@ zip -r -X remove_regservice.zip META-INF customize.sh module.prop system
 
 用同一个 zip 安装：
 
-- Magisk：模块 → 从本地安装。需要 Magisk v20.4 或更高版本。
-- KernelSU / KernelSU Next：在模块页安装该 zip。若当前版本把模块挂载交给
-  metamodule，需要先安装支持 product 分区的挂载 metamodule（官方
-  meta-overlayfs 可以）。
+- Magisk：模块 → 从本地安装。需要 Magisk v20.4 或更高版本。Magisk 自己挂载
+  `system/product`，不需要 metamodule。
+- KernelSU v1/v2、KernelSU Next v1：管理器内置挂载（OverlayFS，或 Next v1 的
+  Magic Mount / OverlayFS），不需要 metamodule。
+- KernelSU v3、KernelSU Next v3：安装器同样接受这个 zip，但挂载交给当前安装的
+  那一个 mount metamodule。参考实现是支持 product 的 meta-overlayfs，不是唯一
+  选择。没有 mount metamodule 时，模块能装上但不会挂载。
 - Recovery 刷入只适用于已经安装 Magisk 的设备，因为 `update-binary` 会加载
   `/data/adb/magisk/util_functions.sh`。KernelSU 与 KernelSU Next 请用各自的
   管理器安装。
